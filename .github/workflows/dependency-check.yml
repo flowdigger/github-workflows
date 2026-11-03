@@ -101,16 +101,16 @@ jobs:
         run: |
           gradle_args=("${{ steps.dc-task.outputs.value }}")
           if [ "${{ inputs.trigger-event }}" = "pull_request" ]; then
-            cat > "${RUNNER_TEMP}/dependency-check-noupdate.init.gradle" <<'EOF'
-            allprojects {
-              plugins.withId('org.owasp.dependencycheck') {
-                dependencyCheck {
-                  autoUpdate = false
-                }
-              }
-            }
-            EOF
-            gradle_args+=("-I" "${RUNNER_TEMP}/dependency-check-noupdate.init.gradle")
+            init_file="${RUNNER_TEMP}/dependency-check-noupdate.init.gradle"
+            printf '%s\n' \
+              "allprojects {" \
+              "  plugins.withId('org.owasp.dependencycheck') {" \
+              "    dependencyCheck {" \
+              "      autoUpdate = false" \
+              "    }" \
+              "  }" \
+              "}" > "${init_file}"
+            gradle_args+=("-I" "${init_file}")
           fi
           if [ -n "${NVD_API_KEY}" ]; then
             gradle_args+=("-Porg.owasp.dependencycheck.nvd.api.key=${NVD_API_KEY}")
