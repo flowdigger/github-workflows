@@ -3,6 +3,11 @@ name: Reusable Dependency Check
 on:
   workflow_call:
     inputs:
+      trigger-event:
+        description: Original caller event name
+        required: false
+        type: string
+        default: workflow_dispatch
       java-version:
         description: Java version for scan runtime
         required: false
@@ -23,10 +28,6 @@ on:
         required: false
         type: boolean
         default: false
-    secrets:
-      nvd-api-key:
-        required: false
-
 permissions:
   contents: read
 
@@ -34,8 +35,7 @@ jobs:
   dependency-check:
     runs-on: ubuntu-latest
     env:
-      INHERITED_NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-      PROVIDED_NVD_API_KEY: ${{ secrets['nvd-api-key'] }}
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
     steps:
       - name: Checkout
@@ -49,16 +49,6 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Resolve NVD API key
-        id: nvd-key
-        shell: bash
-        run: |
-          if [ -n "${PROVIDED_NVD_API_KEY}" ]; then
-            echo "value=${PROVIDED_NVD_API_KEY}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${INHERITED_NVD_API_KEY}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Compute cache key suffix
         id: week
@@ -96,12 +86,12 @@ jobs:
           fi
 
       - name: Nightly DB update
-        if: github.event_name == 'schedule' && steps.dc-task.outputs.skip != 'true'
+        if: inputs.trigger-event == 'schedule' && steps.dc-task.outputs.skip != 'true'
         shell: bash
         run: |
           gradle_args=(dependencyCheckUpdate)
-          if [ -n "${{ steps.nvd-key.outputs.value }}" ]; then
-            gradle_args+=("-Porg.owasp.dependencycheck.nvd.api.key=${{ steps.nvd-key.outputs.value }}")
+          if [ -n "${NVD_API_KEY}" ]; then
+            gradle_args+=("-Porg.owasp.dependencycheck.nvd.api.key=${NVD_API_KEY}")
           fi
           ./gradlew "${gradle_args[@]}"
 
@@ -110,11 +100,20 @@ jobs:
         shell: bash
         run: |
           gradle_args=("${{ steps.dc-task.outputs.value }}")
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            gradle_args+=(--noupdate)
+          if [ "${{ inputs.trigger-event }}" = "pull_request" ]; then
+            cat > "${RUNNER_TEMP}/dependency-check-noupdate.init.gradle" <<'EOF'
+            allprojects {
+              plugins.withId('org.owasp.dependencycheck') {
+                dependencyCheck {
+                  autoUpdate = false
+                }
+              }
+            }
+            EOF
+            gradle_args+=("-I" "${RUNNER_TEMP}/dependency-check-noupdate.init.gradle")
           fi
-          if [ -n "${{ steps.nvd-key.outputs.value }}" ]; then
-            gradle_args+=("-Porg.owasp.dependencycheck.nvd.api.key=${{ steps.nvd-key.outputs.value }}")
+          if [ -n "${NVD_API_KEY}" ]; then
+            gradle_args+=("-Porg.owasp.dependencycheck.nvd.api.key=${NVD_API_KEY}")
           fi
           ./gradlew "${gradle_args[@]}"
 
