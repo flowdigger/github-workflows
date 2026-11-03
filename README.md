@@ -50,3 +50,71 @@ jobs:
 - `pull_request`: forces plugin config `autoUpdate = false` via init script for speed.
 - `schedule`: performs `dependencyCheckUpdate` before scan.
 - Uses cached NVD data at `~/.gradle/dependency-check-data`.
+
+## Reusable Maven Central release workflow
+
+Workflow path:
+
+`flowdigger/github-workflows/.github/workflows/maven-central-release.yml`
+
+### Usage from plugin repository
+
+```yaml
+name: Release to Maven Central
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "release/**"
+      - "snapshot/**"
+      - "snapshots/**"
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    permissions:
+      contents: read
+    uses: flowdigger/github-workflows/.github/workflows/maven-central-release.yml@main
+    with:
+      trigger-event: ${{ github.event_name }}
+      java-version: "21"
+      central-namespace: "org.flowdigger"
+      clone-composite-build-deps: true
+      upload-artifacts: true
+      publish-snapshot-branches: true
+      snapshot-branch-prefix: "refs/heads/snapshot/"
+      snapshot-publish-task: "clean publish"
+    secrets: inherit
+```
+
+### Inputs
+
+- `trigger-event` (string, default: `workflow_dispatch`)
+- `java-version` (string, default: `21`)
+- `verify-task` (string, default: `clean test`)
+- `publish-task` (string, default: `clean packageCentralBundle`)
+- `central-namespace` (string, default: `org.flowdigger`)
+- `bundle-glob` (string, default: `build/central-bundle/*.zip`)
+- `clone-composite-build-deps` (boolean, default: `true`)
+- `fallback-owner` (string, default: `flowdigger`)
+- `upload-artifacts` (boolean, default: `true`)
+- `publish-snapshot-branches` (boolean, default: `false`)
+- `snapshot-branch-prefix` (string, default: `refs/heads/snapshot/`)
+- `snapshot-publish-task` (string, default: `clean publish`)
+
+### Secrets
+
+- `MAVEN_CENTRAL_USERNAME`
+- `MAVEN_CENTRAL_PASSWORD`
+- `SIGNING_KEY`
+- `SIGNING_PASSWORD`
+- `SIGNING_KEY_ID` (optional, if project build needs it)
+
+### Behavior
+
+- `push` to `release/**`: runs verify task only.
+- `workflow_dispatch` and `v*` tags: runs publish task and uploads bundle to Central API.
+- Optional `snapshot*` branches can run snapshot publish task for publish-path testing.
+- Optionally clones known `includeBuild` dependencies before Gradle execution.
