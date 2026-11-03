@@ -1,0 +1,154 @@
+name: Reusable Dependency Check
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: Java version for scan runtime
+        required: false
+        type: string
+        default: "21"
+      gradle-task:
+        description: Gradle task to run, or auto for fallback detection
+        required: false
+        type: string
+        default: "auto"
+      upload-reports:
+        description: Upload dependency-check HTML/XML/JSON artifacts
+        required: false
+        type: boolean
+        default: false
+      fail-on-missing-task:
+        description: Fail when dependency-check task not present
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      nvd-api-key:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-check:
+    runs-on: ubuntu-latest
+    env:
+      INHERITED_NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      PROVIDED_NVD_API_KEY: ${{ secrets['nvd-api-key'] }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve NVD API key
+        id: nvd-key
+        shell: bash
+        run: |
+          if [ -n "${PROVIDED_NVD_API_KEY}" ]; then
+            echo "value=${PROVIDED_NVD_API_KEY}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${INHERITED_NVD_API_KEY}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute cache key suffix
+        id: week
+        shell: bash
+        run: echo "value=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dependency-check NVD data
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/dependency-check-data
+          key: ${{ runner.os }}-dependency-check-${{ steps.week.outputs.value }}
+          restore-keys: |
+            ${{ runner.os }}-dependency-check-
+
+      - name: Resolve dependency-check task
+        id: dc-task
+        shell: bash
+        run: |
+          requested_task="${{ inputs.gradle-task }}"
+          if [ "${requested_task}" != "auto" ]; then
+            echo "value=${requested_task}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ./gradlew -q tasks --all | grep -q "dependencyCheckAnalyze"; then
+            echo "value=dependencyCheckAnalyze" >> "$GITHUB_OUTPUT"
+          elif ./gradlew -q tasks --all | grep -q "dependencyCheck$"; then
+            echo "value=dependencyCheck" >> "$GITHUB_OUTPUT"
+          else
+            if [ "${{ inputs.fail-on-missing-task }}" = "true" ]; then
+              echo "No dependency-check task configured."
+              exit 1
+            fi
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Nightly DB update
+        if: github.event_name == 'schedule' && steps.dc-task.outputs.skip != 'true'
+        shell: bash
+        run: |
+          gradle_args=(dependencyCheckUpdate)
+          if [ -n "${{ steps.nvd-key.outputs.value }}" ]; then
+            gradle_args+=("-Porg.owasp.dependencycheck.nvd.api.key=${{ steps.nvd-key.outputs.value }}")
+          fi
+          ./gradlew "${gradle_args[@]}"
+
+      - name: Run dependency check
+        if: steps.dc-task.outputs.skip != 'true'
+        shell: bash
+        run: |
+          gradle_args=("${{ steps.dc-task.outputs.value }}")
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gradle_args+=(--noupdate)
+          fi
+          if [ -n "${{ steps.nvd-key.outputs.value }}" ]; then
+            gradle_args+=("-Porg.owasp.dependencycheck.nvd.api.key=${{ steps.nvd-key.outputs.value }}")
+          fi
+          ./gradlew "${gradle_args[@]}"
+
+      - name: Missing dependency-check task summary
+        if: steps.dc-task.outputs.skip == 'true'
+        shell: bash
+        run: |
+          echo "### OWASP Dependency-Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "- No dependency-check task configured; scan skipped." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dependency-check HTML report
+        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-html
+          path: build/reports/dependency-check-report.html
+
+      - name: Upload dependency-check XML report
+        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-xml
+          path: build/reports/dependency-check-report.xml
+
+      - name: Upload dependency-check JSON report
+        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-json
+          path: build/reports/dependency-check-report.json
+
+      - name: Dependency-check summary
+        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        shell: bash
+        run: |
+          echo "### OWASP Dependency-Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Reports uploaded as workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
