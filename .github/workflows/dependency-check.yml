@@ -38,25 +38,94 @@ jobs:
       NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
     steps:
+      - name: Evaluate dependency-check gate
+        id: dc-gate
+        shell: bash
+        env:
+          G_DEPENDENCY_CHECK: ${{ vars.G_DEPENDENCY_CHECK }}
+        run: |
+          value="$(printf '%s' "${G_DEPENDENCY_CHECK:-}" | tr '[:upper:]' '[:lower:]')"
+          case "${value}" in
+            "" | "yes")
+              echo "enabled=true" >> "$GITHUB_OUTPUT"
+              ;;
+            "no")
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Invalid vars.G_DEPENDENCY_CHECK value: '${G_DEPENDENCY_CHECK}'. Expected 'yes' or 'no'."
+              exit 1
+              ;;
+          esac
+          echo "normalized=${value:-<unset>}" >> "$GITHUB_OUTPUT"
+
+      - name: Dependency-check disabled summary
+        if: steps.dc-gate.outputs.enabled != 'true'
+        shell: bash
+        run: |
+          echo "### OWASP Dependency-Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Skipped by vars.G_DEPENDENCY_CHECK=\`${{ steps.dc-gate.outputs.normalized }}\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Set vars.G_DEPENDENCY_CHECK to \`yes\` to re-enable scan." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Checkout
+        if: steps.dc-gate.outputs.enabled == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Java
+        if: steps.dc-gate.outputs.enabled == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ inputs.java-version }}
 
       - name: Setup Gradle
+        if: steps.dc-gate.outputs.enabled == 'true'
         uses: gradle/actions/setup-gradle@v4
+
+      - name: Fail fast on legacy dependency-check report DSL
+        if: steps.dc-gate.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          legacy_hits="$(grep -R -n -E "format[[:space:]]*=[[:space:]]*['\"]HTML,[[:space:]]*JSON,[[:space:]]*XML['\"]" \
+            --include='*.gradle' \
+            --include='*.gradle.kts' \
+            --exclude-dir=.git \
+            --exclude-dir=.gradle \
+            --exclude-dir=build \
+            . || true)"
+
+          if [ -z "${legacy_hits}" ]; then
+            exit 0
+          fi
+
+          {
+            echo "### OWASP Dependency-Check configuration error"
+            echo "- Detected legacy report DSL pattern incompatible with dependency-check v13:"
+            echo ""
+            echo "\`\`\`"
+            echo "${legacy_hits}"
+            echo "\`\`\`"
+            echo ""
+            echo "Replace:"
+            echo "\`format = 'HTML,JSON,XML'\`"
+            echo "with:"
+            echo "\`formats = ['HTML', 'JSON', 'XML']\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "Legacy dependency-check DSL detected; failing fast with actionable guidance."
+          exit 1
 
       - name: Compute cache key suffix
         id: week
+        if: steps.dc-gate.outputs.enabled == 'true'
         shell: bash
         run: echo "value=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
 
       - name: Cache dependency-check NVD data
         id: dc-cache
+        if: steps.dc-gate.outputs.enabled == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.gradle/dependency-check-data
@@ -66,6 +135,7 @@ jobs:
 
       - name: Resolve dependency-check task
         id: dc-task
+        if: steps.dc-gate.outputs.enabled == 'true'
         shell: bash
         run: |
           requested_task="${{ inputs.gradle-task }}"
@@ -87,7 +157,7 @@ jobs:
           fi
 
       - name: Nightly DB update
-        if: inputs.trigger-event == 'schedule' && steps.dc-task.outputs.skip != 'true'
+        if: steps.dc-gate.outputs.enabled == 'true' && inputs.trigger-event == 'schedule' && steps.dc-task.outputs.skip != 'true'
         shell: bash
         run: |
           gradle_args=(dependencyCheckUpdate)
@@ -98,7 +168,7 @@ jobs:
 
       - name: Run dependency check
         id: dc-run
-        if: steps.dc-task.outputs.skip != 'true'
+        if: steps.dc-gate.outputs.enabled == 'true' && steps.dc-task.outputs.skip != 'true'
         shell: bash
         run: |
           gradle_args=("${{ steps.dc-task.outputs.value }}")
@@ -135,7 +205,7 @@ jobs:
           done
 
       - name: Dependency-check run summary
-        if: always() && steps.dc-task.outputs.skip != 'true'
+        if: always() && steps.dc-gate.outputs.enabled == 'true' && steps.dc-task.outputs.skip != 'true'
         shell: bash
         run: |
           echo "### OWASP Dependency-Check run details" >> "$GITHUB_STEP_SUMMARY"
@@ -147,7 +217,7 @@ jobs:
           fi
 
       - name: Upload dependency-check report on failure
-        if: failure() && steps.dc-task.outputs.skip != 'true'
+        if: failure() && steps.dc-gate.outputs.enabled == 'true' && steps.dc-task.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report-on-failure
@@ -155,35 +225,35 @@ jobs:
           if-no-files-found: ignore
 
       - name: Missing dependency-check task summary
-        if: steps.dc-task.outputs.skip == 'true'
+        if: steps.dc-gate.outputs.enabled == 'true' && steps.dc-task.outputs.skip == 'true'
         shell: bash
         run: |
           echo "### OWASP Dependency-Check" >> "$GITHUB_STEP_SUMMARY"
           echo "- No dependency-check task configured; scan skipped." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload dependency-check HTML report
-        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        if: always() && steps.dc-gate.outputs.enabled == 'true' && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-html
           path: build/reports/dependency-check-report.html
 
       - name: Upload dependency-check XML report
-        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        if: always() && steps.dc-gate.outputs.enabled == 'true' && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-xml
           path: build/reports/dependency-check-report.xml
 
       - name: Upload dependency-check JSON report
-        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        if: always() && steps.dc-gate.outputs.enabled == 'true' && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-json
           path: build/reports/dependency-check-report.json
 
       - name: Dependency-check summary
-        if: always() && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
+        if: always() && steps.dc-gate.outputs.enabled == 'true' && inputs.upload-reports && steps.dc-task.outputs.skip != 'true'
         shell: bash
         run: |
           echo "### OWASP Dependency-Check" >> "$GITHUB_STEP_SUMMARY"
