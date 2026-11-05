@@ -189,6 +189,38 @@ jobs:
             echo "task=${{ inputs.publish-task }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve signing key id
+        id: signing-env
+        shell: bash
+        run: |
+          set -euo pipefail
+          signing_key_id="$(printf '%s' '${{ secrets.SIGNING_KEY_ID }}' | tr -d '\r\n[:space:]')"
+          signing_key_id_derived=false
+
+          if [ -n "$signing_key_id" ]; then
+            signing_key_id="${signing_key_id#0x}"
+            signing_key_id="${signing_key_id#0X}"
+            signing_key_id="${signing_key_id^^}"
+
+            if [[ "$signing_key_id" =~ ^[0-9A-F]+$ ]] && [ "${#signing_key_id}" -gt 16 ]; then
+              signing_key_id="${signing_key_id: -16}"
+              signing_key_id_derived=true
+            fi
+
+            if [[ ! "$signing_key_id" =~ ^([0-9A-F]{8}|[0-9A-F]{16})$ ]]; then
+              echo "::error::SIGNING_KEY_ID invalid after normalization. Expected 8 or 16 hex chars (optional 0x prefix), or full fingerprint ending with key id."
+              exit 1
+            fi
+          fi
+
+          if [ -n "$signing_key_id" ]; then
+            echo "has_signing_key_id=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_signing_key_id=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "signing_key_id=$signing_key_id" >> "$GITHUB_OUTPUT"
+          echo "signing_key_id_derived=$signing_key_id_derived" >> "$GITHUB_OUTPUT"
+
       - name: Build signed artifacts and bundle
         if: steps.publish-mode.outputs.is_snapshot != 'true'
         env:
@@ -196,7 +228,7 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingKeyId: ${{ steps.signing-env.outputs.signing_key_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -217,7 +249,7 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingKeyId: ${{ steps.signing-env.outputs.signing_key_id }}
         shell: bash
         run: |
           set -euo pipefail
@@ -286,4 +318,13 @@ jobs:
           else
             echo "- Mode: release" >> "$GITHUB_STEP_SUMMARY"
             echo "- Task: \`${{ steps.publish-mode.outputs.task }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ steps.signing-env.outputs.has_signing_key_id }}" = "true" ]; then
+            if [ "${{ steps.signing-env.outputs.signing_key_id_derived }}" = "true" ]; then
+              echo "- Signing key id: derived from provided fingerprint" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- Signing key id: provided" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "- Signing key id: not provided (Gradle fallback)" >> "$GITHUB_STEP_SUMMARY"
           fi

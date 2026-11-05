@@ -110,7 +110,7 @@ jobs:
 - `MAVEN_CENTRAL_PASSWORD`
 - `SIGNING_KEY`
 - `SIGNING_PASSWORD`
-- `SIGNING_KEY_ID` (optional, if project build needs it)
+- `SIGNING_KEY_ID` (optional, if project build needs it; accepts `0x`-prefixed or plain 8/16 hex key id, or full fingerprint)
 
 ### Behavior
 
@@ -118,3 +118,4 @@ jobs:
 - `workflow_dispatch` and `v*` tags: runs publish task and uploads bundle to Central API.
 - Optional `snapshot*` branches can run snapshot publish task for publish-path testing.
 - Optionally clones known `includeBuild` dependencies before Gradle execution.
+- Publish job normalizes `SIGNING_KEY_ID` (trim whitespace/newlines, remove `0x`, uppercase). If longer hex fingerprint is provided, workflow derives low 16 hex chars; if still invalid, workflow fails fast with explicit error.
