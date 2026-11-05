@@ -202,13 +202,13 @@ jobs:
             signing_key_id="${signing_key_id#0X}"
             signing_key_id="${signing_key_id^^}"
 
-            if [[ "$signing_key_id" =~ ^[0-9A-F]+$ ]] && [ "${#signing_key_id}" -gt 16 ]; then
-              signing_key_id="${signing_key_id: -16}"
+            if [[ "$signing_key_id" =~ ^[0-9A-F]+$ ]] && [ "${#signing_key_id}" -gt 8 ]; then
+              signing_key_id="${signing_key_id: -8}"
               signing_key_id_derived=true
             fi
 
-            if [[ ! "$signing_key_id" =~ ^([0-9A-F]{8}|[0-9A-F]{16})$ ]]; then
-              echo "::error::SIGNING_KEY_ID invalid after normalization. Expected 8 or 16 hex chars (optional 0x prefix), or full fingerprint ending with key id."
+            if [[ ! "$signing_key_id" =~ ^[0-9A-F]{8}$ ]]; then
+              echo "::error::SIGNING_KEY_ID invalid after normalization. Expected 8 hex chars (optional 0x prefix), or longer fingerprint/key id ending with 8-char key id."
               exit 1
             fi
           fi
