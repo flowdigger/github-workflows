@@ -118,4 +118,5 @@ jobs:
 - `workflow_dispatch` and `v*` tags: runs publish task and uploads bundle to Central API.
 - Optional `snapshot*` branches can run snapshot publish task for publish-path testing.
 - Optionally clones known `includeBuild` dependencies before Gradle execution.
+- Release publish path runs Gradle dry-run preflight and fails early if publish task graph contains no `sign*Publication` tasks.
 - Publish job normalizes `SIGNING_KEY_ID` (trim whitespace/newlines, remove `0x`, uppercase). If longer value is provided (for example long key id/fingerprint), workflow derives low 8 hex chars for Gradle signing compatibility; if still invalid, workflow fails fast with explicit error.

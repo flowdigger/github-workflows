@@ -221,6 +221,25 @@ jobs:
           echo "signing_key_id=$signing_key_id" >> "$GITHUB_OUTPUT"
           echo "signing_key_id_derived=$signing_key_id_derived" >> "$GITHUB_OUTPUT"
 
+      - name: Preflight publish task graph
+        if: steps.publish-mode.outputs.is_snapshot != 'true'
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingKeyId: ${{ steps.signing-env.outputs.signing_key_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          read -r -a publish_tasks <<< "${{ steps.publish-mode.outputs.task }}"
+          ./gradlew "${publish_tasks[@]}" --dry-run --stacktrace --no-daemon --console=plain | tee publish-preflight.log
+
+          if ! grep -Eq '^:sign[A-Za-z0-9]+Publication\b' publish-preflight.log; then
+            echo "Expected sign*Publication task(s) in publish task graph, but none were found."
+            exit 1
+          fi
+
       - name: Build signed artifacts and bundle
         if: steps.publish-mode.outputs.is_snapshot != 'true'
         env:
