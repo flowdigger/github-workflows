@@ -2,6 +2,59 @@
 
 Shared GitHub reusable workflows for flowdigger repositories.
 
+## Reusable Maven Central publish workflow (recommended)
+
+Workflow path:
+
+`flowdigger/github-workflows/.github/workflows/publish-maven-central.yml`
+
+### Usage from consumer repository
+
+```yaml
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    uses: flowdigger/github-workflows/.github/workflows/publish-maven-central.yml@v1
+    secrets: inherit
+    with:
+      java-version: "21"
+      gradle-task: "publish"
+      clone-flowdigger-gradle: true
+      flowdigger-gradle-ref: "main"
+```
+
+### Inputs
+
+- `java-version` (string, default: `21`)
+- `gradle-task` (string, default: `publish`)
+- `clone-flowdigger-gradle` (boolean, default: `true`)  
+  Clones `../flowdigger-gradle` in runner so consumer `includeBuild("../flowdigger-gradle")` works in CI.
+- `flowdigger-gradle-ref` (string, default: `main`)  
+  Git ref used for cloned `flowdigger-gradle` repository.
+- `fallback-owner` (string, default: `flowdigger`)  
+  Owner/org fallback if clone from caller owner fails.
+
+### Required secrets
+
+- `MAVEN_CENTRAL_USERNAME`
+- `MAVEN_CENTRAL_PASSWORD`
+- `SIGNING_KEY`
+- `SIGNING_PASSWORD`
+
+### Behavior
+
+- Sets `FLOWDIGGER_PUBLISH_TARGET=central`.
+- Supports composite-build plugin resolution in CI by cloning `flowdigger-gradle` beside workspace.
+- Leaves publication semantics in Gradle convention plugin.
+- Keeps caller workflow minimal (trigger + reusable call).
+
 ## Reusable OWASP Dependency-Check workflow
 
 Workflow path:
@@ -40,6 +93,10 @@ jobs:
   Auto resolves `dependencyCheckAnalyze` then `dependencyCheck`.
 - `upload-reports` (boolean, default: `false`)
 - `fail-on-missing-task` (boolean, default: `false`)
+- `clone-flowdigger-gradle` (boolean, default: `false`)  
+  Clones `../flowdigger-gradle` when consumer repo uses composite plugin includeBuild.
+- `flowdigger-gradle-ref` (string, default: `main`)
+- `fallback-owner` (string, default: `flowdigger`)
 
 ### Secrets
 
@@ -52,6 +109,8 @@ jobs:
 - Uses cached NVD data at `~/.gradle/dependency-check-data`.
 
 ## Reusable Maven Central release workflow
+
+Legacy advanced workflow retained for compatibility.
 
 Workflow path:
 

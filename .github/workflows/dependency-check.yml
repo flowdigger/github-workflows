@@ -28,6 +28,21 @@ on:
         required: false
         type: boolean
         default: false
+      clone-flowdigger-gradle:
+        description: Clone flowdigger-gradle when consumer uses includeBuild("../flowdigger-gradle")
+        required: false
+        type: boolean
+        default: false
+      flowdigger-gradle-ref:
+        description: Ref to checkout for flowdigger-gradle composite build
+        required: false
+        type: string
+        default: "main"
+      fallback-owner:
+        description: Fallback owner/org if clone from caller owner fails
+        required: false
+        type: string
+        default: "flowdigger"
 permissions:
   contents: read
 
@@ -70,6 +85,36 @@ jobs:
       - name: Checkout
         if: steps.dc-gate.outputs.enabled == 'true'
         uses: actions/checkout@v4
+
+      - name: Clone flowdigger-gradle for composite build
+        if: steps.dc-gate.outputs.enabled == 'true' && inputs.clone-flowdigger-gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! grep -R -q 'includeBuild("../flowdigger-gradle")\|includeBuild('\''../flowdigger-gradle'\'')' settings.gradle* 2>/dev/null; then
+            echo "No flowdigger-gradle includeBuild reference found; skipping clone."
+            exit 0
+          fi
+
+          ROOT_PARENT="$(dirname "$GITHUB_WORKSPACE")"
+          TARGET_DIR="$ROOT_PARENT/flowdigger-gradle"
+          PRIMARY_OWNER="${GITHUB_REPOSITORY_OWNER}"
+          FALLBACK_OWNER="${{ inputs.fallback-owner }}"
+          REF="${{ inputs.flowdigger-gradle-ref }}"
+
+          if [ -d "$TARGET_DIR/.git" ]; then
+            echo "flowdigger-gradle already present at $TARGET_DIR"
+            exit 0
+          fi
+
+          if git clone --depth 1 --branch "$REF" "https://github.com/$PRIMARY_OWNER/flowdigger-gradle.git" "$TARGET_DIR"; then
+            echo "Cloned flowdigger-gradle from $PRIMARY_OWNER at ref $REF"
+            exit 0
+          fi
+
+          git clone --depth 1 --branch "$REF" "https://github.com/$FALLBACK_OWNER/flowdigger-gradle.git" "$TARGET_DIR"
+          echo "Cloned flowdigger-gradle from $FALLBACK_OWNER at ref $REF"
 
       - name: Setup Java
         if: steps.dc-gate.outputs.enabled == 'true'

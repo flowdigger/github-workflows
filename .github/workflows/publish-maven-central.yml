@@ -1,0 +1,86 @@
+name: Publish to Maven Central
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        type: string
+        required: false
+        default: "21"
+      gradle-task:
+        type: string
+        required: false
+        default: "publish"
+      clone-flowdigger-gradle:
+        type: boolean
+        required: false
+        default: true
+      flowdigger-gradle-ref:
+        type: string
+        required: false
+        default: "main"
+      fallback-owner:
+        type: string
+        required: false
+        default: "flowdigger"
+    secrets:
+      MAVEN_CENTRAL_USERNAME:
+        required: true
+      MAVEN_CENTRAL_PASSWORD:
+        required: true
+      SIGNING_KEY:
+        required: true
+      SIGNING_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: maven-central
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone flowdigger-gradle for composite build
+        if: inputs.clone-flowdigger-gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT_PARENT="$(dirname "$GITHUB_WORKSPACE")"
+          TARGET_DIR="$ROOT_PARENT/flowdigger-gradle"
+          PRIMARY_OWNER="${GITHUB_REPOSITORY_OWNER}"
+          FALLBACK_OWNER="${{ inputs.fallback-owner }}"
+          REF="${{ inputs.flowdigger-gradle-ref }}"
+
+          if [ -d "$TARGET_DIR/.git" ]; then
+            echo "flowdigger-gradle already present at $TARGET_DIR"
+            exit 0
+          fi
+
+          if git clone --depth 1 --branch "$REF" "https://github.com/$PRIMARY_OWNER/flowdigger-gradle.git" "$TARGET_DIR"; then
+            echo "Cloned flowdigger-gradle from $PRIMARY_OWNER at ref $REF"
+            exit 0
+          fi
+
+          git clone --depth 1 --branch "$REF" "https://github.com/$FALLBACK_OWNER/flowdigger-gradle.git" "$TARGET_DIR"
+          echo "Cloned flowdigger-gradle from $FALLBACK_OWNER at ref $REF"
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Publish
+        env:
+          FLOWDIGGER_PUBLISH_TARGET: central
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew --no-daemon ${{ inputs.gradle-task }}
