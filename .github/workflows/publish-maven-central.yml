@@ -121,10 +121,26 @@ jobs:
           BUNDLE_PATH="$BUNDLE_DIR/${GITHUB_REPOSITORY#*/}-${GITHUB_RUN_ID}.zip"
 
           TMP_DIR="$(mktemp -d)"
-          cp -R "$STAGING_DIR"/. "$TMP_DIR"/
+
+          # Central Publisher bundle expects version-level publication content.
+          # Exclude repository-level metadata-only directories to avoid validation errors.
+          pom_found=false
+          while IFS= read -r -d '' pom; do
+            pom_found=true
+            version_dir="$(dirname "$pom")"
+            rel_version_dir="${version_dir#"$STAGING_DIR"/}"
+            mkdir -p "$TMP_DIR/$rel_version_dir"
+            cp -R "$version_dir"/. "$TMP_DIR/$rel_version_dir"/
+          done < <(find "$STAGING_DIR" -type f -name '*.pom' -print0)
+
+          if [ "$pom_found" = false ]; then
+            echo "No .pom files found in staged repository: $STAGING_DIR"
+            exit 1
+          fi
+
           find "$TMP_DIR" -type f ! -name '*.md5' ! -name '*.sha1' -print0 | while IFS= read -r -d '' f; do
-            md5sum "$f" | awk '{print $1}' > "$f.md5"
-            sha1sum "$f" | awk '{print $1}' > "$f.sha1"
+            [ -f "$f.md5" ] || md5sum "$f" | awk '{print $1}' > "$f.md5"
+            [ -f "$f.sha1" ] || sha1sum "$f" | awk '{print $1}' > "$f.sha1"
           done
 
           (
