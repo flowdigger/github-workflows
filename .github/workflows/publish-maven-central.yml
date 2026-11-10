@@ -23,6 +23,18 @@ on:
         type: string
         required: false
         default: "flowdigger"
+      central-namespace:
+        type: string
+        required: false
+        default: "org.flowdigger"
+      staging-directory:
+        type: string
+        required: false
+        default: "build/test-repository"
+      upload-artifacts:
+        type: boolean
+        required: false
+        default: true
     secrets:
       MAVEN_CENTRAL_USERNAME:
         required: true
@@ -76,11 +88,71 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Publish
+      - name: Build signed artifacts into staged repository
         env:
-          FLOWDIGGER_PUBLISH_TARGET: central
+          FLOWDIGGER_PUBLISH_TARGET: local-test
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-        run: ./gradlew --no-daemon ${{ inputs.gradle-task }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon ${{ inputs.gradle-task }} --stacktrace --info | tee publish.log
+
+      - name: Prepare Central Publisher bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          STAGING_DIR="${{ inputs.staging-directory }}"
+          if [ ! -d "$STAGING_DIR" ]; then
+            echo "Staging directory not found: $STAGING_DIR"
+            exit 1
+          fi
+          if ! find "$STAGING_DIR" -type f | grep -q .; then
+            echo "No files found in staging directory: $STAGING_DIR"
+            exit 1
+          fi
+
+          BUNDLE_DIR="build/central-bundle"
+          mkdir -p "$BUNDLE_DIR"
+          BUNDLE_PATH="$BUNDLE_DIR/${GITHUB_REPOSITORY#*/}-${GITHUB_RUN_ID}.zip"
+
+          TMP_DIR="$(mktemp -d)"
+          cp -R "$STAGING_DIR"/. "$TMP_DIR"/
+          find "$TMP_DIR" -type f ! -name '*.md5' ! -name '*.sha1' -print0 | while IFS= read -r -d '' f; do
+            md5sum "$f" | awk '{print $1}' > "$f.md5"
+            sha1sum "$f" | awk '{print $1}' > "$f.sha1"
+          done
+
+          (
+            cd "$TMP_DIR"
+            zip -qr "$GITHUB_WORKSPACE/$BUNDLE_PATH" .
+          )
+          rm -rf "$TMP_DIR"
+
+          echo "bundle-path=$BUNDLE_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bundle to Central Publisher API
+        env:
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body -sS -u "$CENTRAL_USERNAME:$CENTRAL_PASSWORD" \
+            -X POST "https://central.sonatype.com/api/v1/publisher/upload?nameSpace=${{ inputs.central-namespace }}&publishingType=AUTOMATIC" \
+            -F "bundle=@${{ steps.bundle.outputs.bundle-path }}" | tee central-upload-response.json
+
+      - name: Upload publish artifacts
+        if: ${{ always() && inputs.upload-artifacts }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: central-publish-${{ github.run_id }}
+          path: |
+            publish.log
+            central-upload-response.json
+            ${{ steps.bundle.outputs.bundle-path }}
+          if-no-files-found: warn

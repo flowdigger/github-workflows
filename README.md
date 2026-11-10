@@ -21,11 +21,12 @@ on:
 
 jobs:
   publish:
-    uses: flowdigger/github-workflows/.github/workflows/publish-maven-central.yml@v1
+    uses: flowdigger/github-workflows/.github/workflows/publish-maven-central.yml@main
     secrets: inherit
     with:
       java-version: "21"
       gradle-task: "publish"
+      central-namespace: "org.flowdigger"
       clone-flowdigger-gradle: true
       flowdigger-gradle-ref: "main"
 ```
@@ -40,6 +41,12 @@ jobs:
   Git ref used for cloned `flowdigger-gradle` repository.
 - `fallback-owner` (string, default: `flowdigger`)  
   Owner/org fallback if clone from caller owner fails.
+- `central-namespace` (string, default: `org.flowdigger`)  
+  Namespace sent to Central Publisher API upload endpoint.
+- `staging-directory` (string, default: `build/test-repository`)  
+  Directory containing staged Maven repository files to be bundled and uploaded.
+- `upload-artifacts` (boolean, default: `true`)  
+  Uploads publish log, Central API response, and generated bundle as workflow artifacts.
 
 ### Required secrets
 
@@ -50,9 +57,9 @@ jobs:
 
 ### Behavior
 
-- Sets `FLOWDIGGER_PUBLISH_TARGET=central`.
+- Builds signed artifacts with `FLOWDIGGER_PUBLISH_TARGET=local-test`.
+- Creates Central bundle from staged repository, adds `.md5` and `.sha1` files, uploads bundle to Central Publisher API.
 - Supports composite-build plugin resolution in CI by cloning `flowdigger-gradle` beside workspace.
-- Leaves publication semantics in Gradle convention plugin.
 - Keeps caller workflow minimal (trigger + reusable call).
 
 ## Reusable OWASP Dependency-Check workflow
